@@ -11,7 +11,7 @@ import okhttp3.HttpUrl
  */
 class PersistentCookieJar(private val prefs: SharedPreferences) : CookieJar {
     private val cache = mutableListOf<Cookie>()
-    private val sep = ""
+    private val sep = "\u0001" // control char: never appears in cookie fields
 
     init {
         prefs.getString("cookies", null)

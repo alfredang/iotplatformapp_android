@@ -1,9 +1,15 @@
 package com.tertiaryinfotech.iotflow.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Settings
@@ -23,9 +29,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tertiaryinfotech.iotflow.AlertNotifier
 import com.tertiaryinfotech.iotflow.AuthState
 import com.tertiaryinfotech.iotflow.SessionViewModel
+import kotlinx.coroutines.delay
 
 @Composable
 fun RootScreen(session: SessionViewModel) {
@@ -49,10 +59,31 @@ private data class Tab(val label: String, val icon: ImageVector)
 @Composable
 private fun MainTabs(session: SessionViewModel) {
     var selected by rememberSaveable { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* alerts simply stay silent if denied */ }
+
+    // Mirror iOS: request notification permission, then poll for new ACTIVE
+    // alerts every 30s while signed in and post local notifications.
+    LaunchedEffect(Unit) {
+        AlertNotifier.ensureChannel(context)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        while (true) {
+            AlertNotifier.poll(context)
+            delay(AlertNotifier.POLL_INTERVAL_MS)
+        }
+    }
     val tabs = remember {
         listOf(
             Tab("Dashboard", Icons.Filled.GridView),
             Tab("Devices", Icons.Filled.Memory),
+            Tab("Automations", Icons.Filled.Bolt),
             Tab("Settings", Icons.Filled.Settings),
         )
     }
@@ -75,6 +106,7 @@ private fun MainTabs(session: SessionViewModel) {
             when (selected) {
                 0 -> DashboardScreen()
                 1 -> DevicesScreen()
+                2 -> AutomationsScreen()
                 else -> SettingsScreen(session)
             }
         }

@@ -94,6 +94,18 @@ object ApiClient {
         cookieJar.clear()
     }
 
+    /** Permanently delete (anonymize) the signed-in account — Play/App Store policy. */
+    suspend fun deleteAccount() = withContext(Dispatchers.IO) {
+        if (Store.demoMode) return@withContext
+        val req = Request.Builder().url(url("/api/account")).delete().build()
+        val (body, code) = send(req)
+        if (code !in 200..299) {
+            val msg = runCatching { json.decodeFromString<APIErrorResponse>(body).error }.getOrNull()
+            throw ApiException(msg ?: "Could not delete account ($code).")
+        }
+        cookieJar.clear()
+    }
+
     private fun fetchCsrf(): String {
         val req = Request.Builder().url(url("/api/auth/csrf")).build()
         val (body, _) = send(req)
@@ -141,6 +153,100 @@ object ApiClient {
         val req = Request.Builder().url(url("/api/devices/$id")).delete().build()
         val (_, code) = send(req)
         if (code !in 200..299) throw ApiException("Could not delete device ($code).")
+    }
+
+    // MARK: - Dashboard widgets + device control
+
+    /** The current project's dashboard widgets (display + control), matching web. */
+    suspend fun dashboardWidgets(): List<DashWidget> = withContext(Dispatchers.IO) {
+        if (Store.demoMode) return@withContext DemoData.widgets()
+        val resp: WidgetsResponse = getJson(url("/api/dashboard/widgets"))
+        resp.widgets
+    }
+
+    /** Latest value for a device metric (number / gauge / LED widgets). */
+    suspend fun latestValue(deviceId: String, metric: String): Double? = withContext(Dispatchers.IO) {
+        if (Store.demoMode) return@withContext DemoData.latest(deviceId, metric)
+        val m = java.net.URLEncoder.encode(metric, "UTF-8")
+        val resp: TelemetryLatestResponse = getJson(url("/api/devices/$deviceId/telemetry?metric=$m&limit=1"))
+        resp.telemetry.firstOrNull()?.value
+    }
+
+    /** Current virtual-pin states for a device (control widgets reflect these). */
+    suspend fun pinStates(deviceId: String): Map<String, Double> = withContext(Dispatchers.IO) {
+        if (Store.demoMode) return@withContext DemoData.pins(deviceId)
+        val resp: PinStateResponse = getJson(url("/api/devices/$deviceId/command"))
+        resp.state.keys.mapNotNull { k -> resp.number(k)?.let { k to it } }.toMap()
+    }
+
+    /** Set a virtual-pin value (downlink control). */
+    suspend fun setCommand(
+        deviceId: String, pin: String, value: Double?, strValue: String? = null,
+    ) = withContext(Dispatchers.IO) {
+        if (Store.demoMode) { DemoData.setPin(deviceId, pin, value); return@withContext }
+        val payload = JSONObject().apply {
+            put("pin", pin)
+            if (value != null) put("value", value)
+            if (strValue != null) put("strValue", strValue)
+        }.toString()
+        val req = Request.Builder()
+            .url(url("/api/devices/$deviceId/command"))
+            .post(payload.toRequestBody(JSON_MEDIA))
+            .build()
+        val (body, code) = send(req)
+        if (code !in 200..299) {
+            val msg = runCatching { json.decodeFromString<APIErrorResponse>(body).error }.getOrNull()
+            throw ApiException(msg ?: "Could not send command ($code).")
+        }
+    }
+
+    /** Recent telemetry history for a metric (chart widgets), oldest first. */
+    suspend fun telemetryHistory(deviceId: String, metric: String, limit: Int = 30): List<TelemetryHistoryResponse.TelemetryPoint> =
+        withContext(Dispatchers.IO) {
+            if (Store.demoMode) return@withContext DemoData.history(metric)
+            val m = java.net.URLEncoder.encode(metric, "UTF-8")
+            val resp: TelemetryHistoryResponse = getJson(url("/api/devices/$deviceId/telemetry?metric=$m&limit=$limit"))
+            resp.telemetry.reversed() // API returns newest first
+        }
+
+    // MARK: - Automations (n8n)
+
+    /** The current project's n8n automations. */
+    suspend fun automations(): List<Automation> = withContext(Dispatchers.IO) {
+        if (Store.demoMode) return@withContext DemoData.automations()
+        val resp: AutomationsResponse = getJson(url("/api/automations"))
+        resp.automations
+    }
+
+    /** Send a sample event to the automation's n8n webhook — same as the web Test button. */
+    suspend fun triggerAutomation(id: String): AutomationActionResponse = withContext(Dispatchers.IO) {
+        if (Store.demoMode) return@withContext DemoData.triggerAutomation(id)
+        val req = Request.Builder()
+            .url(url("/api/automations/$id"))
+            .post("".toRequestBody(JSON_MEDIA))
+            .build()
+        val (body, code) = send(req)
+        if (code !in 200..299) {
+            val msg = runCatching { json.decodeFromString<APIErrorResponse>(body).error }.getOrNull()
+            throw ApiException(msg ?: "Could not trigger flow ($code).")
+        }
+        runCatching { json.decodeFromString<AutomationActionResponse>(body) }
+            .getOrDefault(AutomationActionResponse(ok = true))
+    }
+
+    /** Enable or disable an automation. */
+    suspend fun setAutomationEnabled(id: String, enabled: Boolean) = withContext(Dispatchers.IO) {
+        if (Store.demoMode) { DemoData.setAutomationEnabled(id, enabled); return@withContext }
+        val payload = JSONObject().apply { put("enabled", enabled) }.toString()
+        val req = Request.Builder()
+            .url(url("/api/automations/$id"))
+            .patch(payload.toRequestBody(JSON_MEDIA))
+            .build()
+        val (body, code) = send(req)
+        if (code !in 200..299) {
+            val msg = runCatching { json.decodeFromString<APIErrorResponse>(body).error }.getOrNull()
+            throw ApiException(msg ?: "Could not update automation ($code).")
+        }
     }
 
     // MARK: - Helpers

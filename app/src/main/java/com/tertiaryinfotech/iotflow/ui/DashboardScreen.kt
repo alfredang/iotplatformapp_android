@@ -127,6 +127,8 @@ private fun DashboardContent(s: DashboardSummary) {
                 }
             }
         }
+
+        DashboardWidgetsSection()
     }
 }
 

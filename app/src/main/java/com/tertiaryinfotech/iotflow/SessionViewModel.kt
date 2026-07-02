@@ -53,4 +53,10 @@ class SessionViewModel : ViewModel() {
         ApiClient.logout()
         _state.value = AuthState.SignedOut
     }
+
+    suspend fun deleteAccount() {
+        ApiClient.deleteAccount()
+        Store.demoMode = false
+        _state.value = AuthState.SignedOut
+    }
 }
